@@ -1,0 +1,80 @@
+Using query hash to create template plan guide
+Alternative to optimizing for ad-hoc queries
+
+(cannot be used on sql express)
+
+create table #single_use_plan_handles
+(plan_handle varbinary(64),
+size_in_bytes int
+)
+insert into #single_use_plan_handles
+select plan_handle, size_in_bytes from sys.dm_exec_cached_plans where usecounts = 1
+select count(1) number_of_queries, query_hash,
+sum(convert(bigint,size_in_bytes)) size_in_cache_bytes,
+max(size_in_bytes) size_of_each_bytes
+from sys.dm_exec_query_stats a inner join #single_use_plan_handles b
+on a.plan_handle = b.plan_handle group by query_hash having count(1) > 1 order by 3 desc
+drop table #single_use_plan_handles
+
+
+-This will create a table that will contain the most expensive query plans cached in memory, along with the query hash which we will need going forward. Get the query hash from the most expensive in the 'size_in_cache_bytes' columns.
+
+
+select top 10
+text from sys.dm_exec_query_stats a
+cross apply sys.dm_exec_sql_text(a.sql_handle) b
+where a.query_hash = 0x891BF706BDB9D8B8 
+
+-replace the hash with the hash you got from above
+-grab the sql text that returns from that hash
+-you’ll need to escape any quotes
+
+USE AdventureWorks2012
+DECLARE @stmt nvarchar(max);
+DECLARE @params nvarchar(max);
+EXEC sp_get_query_template
+N'paste sql text here'
+@stmt OUTPUT,
+@params OUTPUT
+EXEC sp_create_plan_guide N'LookupCustomerOrderTemplate',
+@stmt,
+N'TEMPLATE',
+NULL,
+@params,
+N'OPTION(PARAMETERIZATION FORCED)';
+
+
+-be sure you're in the right database, plan guides are db specific
+-rerun the below with the original hash
+
+select top 10
+text from sys.dm_exec_query_stats a
+cross apply sys.dm_exec_sql_text(a.sql_handle) b
+where a.query_hash = 0x891BF706BDB9D8B8
+
+-if multiple rows were returned the first time for the same statement, there should only be one row now
+-finally, rerun the below
+
+
+create table #single_use_plan_handles
+(plan_handle varbinary(64),
+size_in_bytes int
+)
+insert into #single_use_plan_handles
+select plan_handle, size_in_bytes from sys.dm_exec_cached_plans where usecounts = 1
+select count(1) number_of_queries, query_hash,
+sum(convert(bigint,size_in_bytes)) size_in_cache_bytes,
+max(size_in_bytes) size_of_each_bytes
+from sys.dm_exec_query_stats a inner join #single_use_plan_handles b
+on a.plan_handle = b.plan_handle group by query_hash having count(1) > 1 order by 3 desc
+drop table #single_use_plan_handles
+
+
+-hopefully, if that was the issue, you should no longer see that hash taking up the cache
+-overall workload should be decreased if that query was a significant part of cache
+
+
+
+
+
+
